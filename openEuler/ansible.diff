@@ -1,0 +1,333 @@
+diff --git a/group_vars/all.yml b/group_vars/all.yml
+index c618649a0..2a21d75e9 100644
+--- a/group_vars/all.yml
++++ b/group_vars/all.yml
+@@ -606,7 +606,6 @@ osprofiler_backend_connection_string: "{{ redis_connection_string if osprofiler_
+ rabbitmq_hipe_compile: "no"
+ rabbitmq_user: "openstack"
+ rabbitmq_monitoring_user: ""
+-rabbitmq_version: "rabbitmq_server-3.6/plugins/rabbitmq_clusterer-3.6.x.ez/rabbitmq_clusterer-3.6.x-667f92b0/ebin"
+ outward_rabbitmq_user: "openstack"
+ 
+ ####################
+diff --git a/library/kolla_toolbox.py b/library/kolla_toolbox.py
+index 5a4702d68..be1bf05e4 100644
+--- a/library/kolla_toolbox.py
++++ b/library/kolla_toolbox.py
+@@ -141,7 +141,7 @@ def main():
+     output = client.exec_start(job)
+ 
+     for exp in [JSON_REG, NON_JSON_REG]:
+-        m = exp.match(output)
++        m = exp.search(output)
+         if m:
+             inner_output = m.groupdict().get('stdout')
+             break
+diff --git a/roles/baremetal/templates/docker_systemd_service.j2 b/roles/baremetal/templates/docker_systemd_service.j2
+index 1a5bc8d2a..e17af1b4b 100644
+--- a/roles/baremetal/templates/docker_systemd_service.j2
++++ b/roles/baremetal/templates/docker_systemd_service.j2
+@@ -1,4 +1,4 @@
+ [Service]
+ MountFlags=shared
+ ExecStart=
+-ExecStart=/usr/bin/{{ docker_binary_name|default("docker daemon", true) }}{% if docker_registry_insecure | bool %} --insecure-registry {{ docker_registry }}{% endif %}{% if docker_storage_driver %} --storage-driver {{ docker_storage_driver }}{% endif %}{% if docker_runtime_directory %} --graph {{ docker_runtime_directory }}{% endif %}{% if docker_custom_option %} {{ docker_custom_option }}{% endif %} --log-opt max-file={{ docker_log_max_file }} --log-opt max-size={{ docker_log_max_size }}
++ExecStart=/usr/bin/{{ docker_binary_name|default("docker daemon", true) }}{% if ansible_architecture == 'aarch64' and kolla_base_distro in ['openeuler'] %} --exec-opt native.umask=normal{% endif %}{% if docker_registry_insecure | bool %} --insecure-registry {{ docker_registry }}{% endif %}{% if docker_storage_driver %} --storage-driver {{ docker_storage_driver }}{% endif %}{% if docker_runtime_directory %} --graph {{ docker_runtime_directory }}{% endif %}{% if docker_custom_option %} {{ docker_custom_option }}{% endif %} --log-opt max-file={{ docker_log_max_file }} --log-opt max-size={{ docker_log_max_size }}
+diff --git a/roles/haproxy/templates/haproxy.json.j2 b/roles/haproxy/templates/haproxy.json.j2
+index 31ed4c597..a1f143df0 100644
+--- a/roles/haproxy/templates/haproxy.json.j2
++++ b/roles/haproxy/templates/haproxy.json.j2
+@@ -1,4 +1,4 @@
+-{% set haproxy_cmd='/usr/sbin/haproxy -W -db' if kolla_base_distro in ['ubuntu']  else '/usr/sbin/haproxy-systemd-wrapper' %}
++{% set haproxy_cmd='/usr/sbin/haproxy -W -db' if kolla_base_distro in ['ubuntu', 'openeuler']  else '/usr/sbin/haproxy-systemd-wrapper' %}
+ {
+     "command": "{{ haproxy_cmd }} -f /etc/haproxy/haproxy.cfg -p /run/haproxy.pid",
+     "config_files": [
+diff --git a/roles/mariadb/templates/galera.cnf.j2 b/roles/mariadb/templates/galera.cnf.j2
+index eb85296a9..d27f2e3bf 100644
+--- a/roles/mariadb/templates/galera.cnf.j2
++++ b/roles/mariadb/templates/galera.cnf.j2
+@@ -1,5 +1,5 @@
+ {%- set wsrep_driver = '/usr/lib/galera/libgalera_smm.so' if kolla_base_distro in ['debian', 'ubuntu'] else '/usr/lib64/galera/libgalera_smm.so' %}
+-{% set sst_method = 'mariabackup' if kolla_base_distro in ['debian'] else 'xtrabackup-v2' %}
++{% set sst_method = 'mariabackup' if kolla_base_distro in ['debian','openeuler'] else 'xtrabackup-v2' %}
+ 
+ [client]
+ default-character-set=utf8
+diff --git a/roles/nova/templates/qemu.conf.j2 b/roles/nova/templates/qemu.conf.j2
+index b926b7bb3..ca362a8b7 100644
+--- a/roles/nova/templates/qemu.conf.j2
++++ b/roles/nova/templates/qemu.conf.j2
+@@ -2,3 +2,7 @@ stdio_handler = "file"
+ 
+ user = "nova"
+ group = "nova"
++
++{% if ansible_architecture == 'aarch64' and kolla_base_distro in ['openeuler'] %}
++nvram = ["/usr/share/AAVMF/AAVMF_CODE.fd:/usr/share/AAVMF/AAVMF_VARS.fd", "/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw:/usr/share/edk2/aarch64/vars-template-pflash.raw"]
++{% endif %}
+diff --git a/roles/rabbitmq/defaults/main.yml b/roles/rabbitmq/defaults/main.yml
+index f709401e9..d9b92040e 100644
+--- a/roles/rabbitmq/defaults/main.yml
++++ b/roles/rabbitmq/defaults/main.yml
+@@ -39,3 +39,4 @@ rabbitmq_dimensions: "{{ default_container_dimensions }}"
+ rabbitmq_user: "openstack"
+ rabbitmq_cluster_name: "openstack"
+ rabbitmq_hostname: "{{ ansible_hostname }}"
++rabbitmq_pid_file: "/var/lib/rabbitmq/mnesia/rabbitmq.pid"
+diff --git a/roles/rabbitmq/handlers/main.yml b/roles/rabbitmq/handlers/main.yml
+index 3c31cf700..d25f4e2ef 100644
+--- a/roles/rabbitmq/handlers/main.yml
++++ b/roles/rabbitmq/handlers/main.yml
+@@ -1,5 +1,5 @@
+ ---
+-- name: Restart rabbitmq container
++- name: Restart rabbitmq container (first node)
+   vars:
+     service_name: "rabbitmq"
+     service: "{{ rabbitmq_services[service_name] }}"
+@@ -16,7 +16,40 @@
+     dimensions: "{{ service.dimensions }}"
+   when:
+     - kolla_action != "config"
+-    - inventory_hostname in groups[service.group]
++    - inventory_hostname == groups[service.group]|first
++    - service.enabled | bool
++    - config_json.changed | bool
++      or rabbitmq_confs.changed | bool
++      or rabbitmq_container.changed | bool
++  notify:
++    - Waiting for rabbitmq to start on first node
++
++- name: Waiting for rabbitmq to start on first node
++  vars:
++    service_name: "rabbitmq"
++    service: "{{ rabbitmq_services[service_name] }}"
++  shell: "docker exec {{ service.container_name }} rabbitmqctl wait {{ rabbitmq_pid_file }}"
++  when:
++    - inventory_hostname == groups[service.group]|first
++
++- name: Restart rabbitmq container (rest of nodes)
++  vars:
++    service_name: "rabbitmq"
++    service: "{{ rabbitmq_services[service_name] }}"
++    config_json: "{{ rabbitmq_config_jsons.results|selectattr('item.key', 'equalto', service_name)|first }}"
++    rabbitmq_container: "{{ check_rabbitmq_containers.results|selectattr('item.key', 'equalto', service_name)|first }}"
++  become: true
++  kolla_docker:
++    action: "recreate_or_restart_container"
++    common_options: "{{ docker_common_options }}"
++    name: "{{ service.container_name }}"
++    image: "{{ service.image }}"
++    volumes: "{{ service.volumes }}"
++    environment: "{{ service.environment }}"
++    dimensions: "{{ service.dimensions }}"
++  when:
++    - kolla_action != "config"
++    - inventory_hostname != groups[service.group]|first
+     - service.enabled | bool
+     - config_json.changed | bool
+       or rabbitmq_confs.changed | bool
+diff --git a/roles/rabbitmq/tasks/config.yml b/roles/rabbitmq/tasks/config.yml
+index ef9ab1111..34328d48e 100644
+--- a/roles/rabbitmq/tasks/config.yml
++++ b/roles/rabbitmq/tasks/config.yml
+@@ -24,7 +24,8 @@
+     - item.value.enabled | bool
+   with_dict: "{{ rabbitmq_services }}"
+   notify:
+-    - Restart rabbitmq container
++    - Restart rabbitmq container (first node)
++    - Restart rabbitmq container (rest of nodes)
+ 
+ - name: Copying over rabbitmq configs
+   vars:
+@@ -40,11 +41,11 @@
+     - service.enabled | bool
+   with_items:
+     - "rabbitmq-env.conf"
+-    - "rabbitmq.config"
+-    - "rabbitmq-clusterer.config"
++    - "rabbitmq.conf"
+     - "definitions.json"
+   notify:
+-    - Restart rabbitmq container
++    - Restart rabbitmq container (first node)
++    - Restart rabbitmq container (rest of nodes)
+ 
+ - name: Check rabbitmq containers
+   become: true
+@@ -63,4 +64,5 @@
+     - item.value.enabled | bool
+   with_dict: "{{ rabbitmq_services }}"
+   notify:
+-    - Restart rabbitmq container
++    - Restart rabbitmq container (first node)
++    - Restart rabbitmq container (rest of nodes)
+diff --git a/roles/rabbitmq/tasks/upgrade.yml b/roles/rabbitmq/tasks/upgrade.yml
+index 5452fc493..3c176eb53 100644
+--- a/roles/rabbitmq/tasks/upgrade.yml
++++ b/roles/rabbitmq/tasks/upgrade.yml
+@@ -1,4 +1,7 @@
+ ---
++# NOTE(pbourke): These tasks perform a 'full stop upgrade', which is necessary when moving between
++# major releases. In future kolla-ansible releases we may be able to change this to a rolling
++# restart. For info on this process see https://www.rabbitmq.com/upgrade.html
+ - name: Checking if rabbitmq container needs upgrading
+   vars:
+     service_name: "rabbitmq"
+@@ -15,31 +18,25 @@
+ 
+ - include_tasks: config.yml
+ 
+-- name: Find gospel node
+-  command: docker exec -t {{ project_name }} /usr/local/bin/rabbitmq_get_gospel_node
+-  changed_when: gospel_node.stdout | from_json | changed
+-  failed_when: gospel_node.stdout | from_json | failed
+-  register: gospel_node
+-  run_once: True
+-
+-- name: Stopping non-gospel nodes
++- name: Stopping all rabbitmq instances but the first node
+   become: true
+   kolla_docker:
+     action: "stop_container"
+     common_options: "{{ docker_common_options }}"
+     name: "{{ project_name }}"
+   when:
+-    - rabbitmq_hostname != (gospel_node.stdout | from_json).hostname
++    - inventory_hostname != groups[role_rabbitmq_groups]|first
+     - rabbitmq_differs['result']
+ 
+-- name: Flush handlers
+-  meta: flush_handlers
++- name: Stopping rabbitmq on the first node
++  become: true
++  kolla_docker:
++    action: "stop_container"
++    common_options: "{{ docker_common_options }}"
++    name: "{{ project_name }}"
+   when:
+-    - rabbitmq_hostname == (gospel_node.stdout | from_json).hostname
++    - inventory_hostname == groups[role_rabbitmq_groups]|first
+     - rabbitmq_differs['result']
+ 
+ - name: Flush handlers
+   meta: flush_handlers
+-  when:
+-    - rabbitmq_hostname != (gospel_node.stdout | from_json).hostname
+-    - rabbitmq_differs['result']
+diff --git a/roles/rabbitmq/templates/rabbitmq-clusterer.config.j2 b/roles/rabbitmq/templates/rabbitmq-clusterer.config.j2
+deleted file mode 100644
+index 35f0e67fc..000000000
+--- a/roles/rabbitmq/templates/rabbitmq-clusterer.config.j2
++++ /dev/null
+@@ -1,11 +0,0 @@
+-[
+-  {version, 1},
+-  {nodes, [
+-  {% for host in groups[role_rabbitmq_groups] %}
+-    {'rabbit@{{ hostvars[host]['ansible_hostname'] }}', disc}
+-      {%- if not loop.last -%},{%- endif %}
+-  {% endfor %}
+-  ]},
+-  {gospel,
+-    {node, 'rabbit@{{ hostvars[groups[role_rabbitmq_groups][0]]['ansible_hostname'] }}'}}
+-].
+diff --git a/roles/rabbitmq/templates/rabbitmq-env.conf.j2 b/roles/rabbitmq/templates/rabbitmq-env.conf.j2
+index d0a9fe0dc..3d750fdd9 100644
+--- a/roles/rabbitmq/templates/rabbitmq-env.conf.j2
++++ b/roles/rabbitmq/templates/rabbitmq-env.conf.j2
+@@ -1,17 +1,7 @@
+ RABBITMQ_NODENAME=rabbit@{{ ansible_hostname }}
+-RABBITMQ_BOOT_MODULE=rabbit_clusterer
+-RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS="-pa /usr/lib/rabbitmq/lib/{{ rabbitmq_version }}"
+-
+ RABBITMQ_LOG_BASE=/var/log/kolla/{{ project_name }}
++RABBITMQ_DIST_PORT={{ role_rabbitmq_cluster_port }}
++RABBITMQ_PID_FILE={{ rabbitmq_pid_file }}
+ 
+-# TODO(sdake, vhosakot)
+-# erlang by default binds to wildcard (all interfaces) and can potentially
+-# interfere with the neutron external or tenant networks. We should in theory
+-# bind epmd to the host's IPv4 address to address the issue however this also
+-# has issues and can crash erlang when it is compiled with IPv6 support.
+-# See bugs:
+-# https://bugs.launchpad.net/ubuntu/+source/erlang/+bug/1374109
+-# https://bugs.launchpad.net/kolla/+bug/1562701
+-# https://bugzilla.redhat.com/show_bug.cgi?id=1324922
+-#export ERL_EPMD_ADDRESS={{ api_interface_address }}
++export ERL_EPMD_ADDRESS={{ api_interface_address }}
+ export ERL_EPMD_PORT={{ role_rabbitmq_epmd_port }}
+diff --git a/roles/rabbitmq/templates/rabbitmq.conf.j2 b/roles/rabbitmq/templates/rabbitmq.conf.j2
+new file mode 100644
+index 000000000..e95b7ccca
+--- /dev/null
++++ b/roles/rabbitmq/templates/rabbitmq.conf.j2
+@@ -0,0 +1,14 @@
++listeners.tcp.1 = {{ api_interface_address }}:{{ role_rabbitmq_port }}
++{% if rabbitmq_hipe_compile|bool %}
++hipe_compile = true
++{% endif %}
++cluster_partition_handling = autoheal
++
++management.listener.ip = {{ api_interface_address }}
++management.listener.port = {{ role_rabbitmq_management_port }}
++management.load_definitions = /etc/rabbitmq/definitions.json
++
++cluster_formation.peer_discovery_backend = rabbit_peer_discovery_classic_config
++{% for host in groups[role_rabbitmq_groups] %}
++cluster_formation.classic_config.nodes.{{ loop.index0 }} = rabbit@{{ hostvars[host]['ansible_hostname'] }}
++{% endfor %}
+diff --git a/roles/rabbitmq/templates/rabbitmq.config.j2 b/roles/rabbitmq/templates/rabbitmq.config.j2
+deleted file mode 100644
+index 47b390595..000000000
+--- a/roles/rabbitmq/templates/rabbitmq.config.j2
++++ /dev/null
+@@ -1,25 +0,0 @@
+-[
+-  {kernel, [
+-    {inet_dist_use_interface, {% raw %}{{% endraw %}{{ api_interface_address | regex_replace('\.', ',') }}}},
+-    {inet_dist_listen_min, {{ role_rabbitmq_cluster_port }}},
+-    {inet_dist_listen_max, {{ role_rabbitmq_cluster_port }}}
+-  ]},
+-  {rabbit, [
+-{% if rabbitmq_hipe_compile|bool %}
+-    {hipe_compile, true},
+-{% endif %}
+-    {tcp_listeners, [
+-      {"{{ api_interface_address }}", {{ role_rabbitmq_port }}}
+-    ]},
+-    {cluster_partition_handling, autoheal}
+-  ]},
+-  {rabbitmq_management, [
+-    {listener, [
+-      {ip, "{{ api_interface_address }}"},
+-      {port, {{ role_rabbitmq_management_port }}}
+-    ]},
+-    {load_definitions, "/etc/rabbitmq/definitions.json"}
+-  ]},
+-  {rabbitmq_clusterer, [{config, "/etc/rabbitmq/rabbitmq-clusterer.config"}]}
+-].
+-% EOF
+diff --git a/roles/rabbitmq/templates/rabbitmq.json.j2 b/roles/rabbitmq/templates/rabbitmq.json.j2
+index 07987def3..284a823b0 100644
+--- a/roles/rabbitmq/templates/rabbitmq.json.j2
++++ b/roles/rabbitmq/templates/rabbitmq.json.j2
+@@ -8,14 +8,8 @@
+             "perm": "0600"
+         },
+         {
+-            "source": "{{ container_config_directory }}/rabbitmq.config",
+-            "dest": "/etc/rabbitmq/rabbitmq.config",
+-            "owner": "rabbitmq",
+-            "perm": "0600"
+-        },
+-        {
+-            "source": "{{ container_config_directory }}/rabbitmq-clusterer.config",
+-            "dest": "/etc/rabbitmq/rabbitmq-clusterer.config",
++            "source": "{{ container_config_directory }}/rabbitmq.conf",
++            "dest": "/etc/rabbitmq/rabbitmq.conf",
+             "owner": "rabbitmq",
+             "perm": "0600"
+         },
