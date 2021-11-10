@@ -1,0 +1,36 @@
+diff --git a/library/kolla_toolbox.py b/library/kolla_toolbox.py
+index 0957a8bd1..4a333d8d5 100644
+--- a/library/kolla_toolbox.py
++++ b/library/kolla_toolbox.py
+@@ -133,7 +133,7 @@ def main():
+     output = client.exec_start(job)
+ 
+     for exp in [JSON_REG, NON_JSON_REG]:
+-        m = exp.match(output)
++        m = exp.search(output)
+         if m:
+             inner_output = m.groupdict().get('stdout')
+             break
+diff --git a/roles/haproxy/templates/haproxy.json.j2 b/roles/haproxy/templates/haproxy.json.j2
+index 9e0d2808f..2bc2ed6a9 100644
+--- a/roles/haproxy/templates/haproxy.json.j2
++++ b/roles/haproxy/templates/haproxy.json.j2
+@@ -1,5 +1,6 @@
++{% set haproxy_cmd='/usr/sbin/haproxy -W -db' if kolla_base_distro in ['openeuler']  else '/usr/sbin/haproxy-systemd-wrapper' %}
+ {
+-    "command": "/usr/sbin/haproxy-systemd-wrapper -f /etc/haproxy/haproxy.cfg -p /run/haproxy.pid",
++    "command": "{{ haproxy_cmd }} -f /etc/haproxy/haproxy.cfg -p /run/haproxy.pid",
+     "config_files": [
+         {
+             "source": "{{ container_config_directory }}/haproxy.cfg",
+diff --git a/roles/mariadb/templates/galera.cnf.j2 b/roles/mariadb/templates/galera.cnf.j2
+index d0c36b0fa..ac5a5dd9e 100644
+--- a/roles/mariadb/templates/galera.cnf.j2
++++ b/roles/mariadb/templates/galera.cnf.j2
+@@ -1,5 +1,5 @@
+ {%- set wsrep_driver = '/usr/lib/galera/libgalera_smm.so' if kolla_base_distro in ['debian', 'ubuntu'] else '/usr/lib64/galera/libgalera_smm.so' %}
+-{% set sst_method = 'mariabackup' if kolla_base_distro in ['debian'] else 'xtrabackup-v2' %}
++{% set sst_method = 'mariabackup' if kolla_base_distro in ['debian', 'openeuler'] else 'xtrabackup-v2' %}
+ 
+ [client]
+ default-character-set=utf8
